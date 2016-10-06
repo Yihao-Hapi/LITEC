@@ -66,7 +66,7 @@ void main(void)
 	stats_led_off();
 	PLAYERBILED1 = 0;
 	PLAYERBILED0 = 0;
-	
+	printf("after");
 
  	while (round <= 2)
  	{	
