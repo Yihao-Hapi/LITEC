@@ -52,7 +52,8 @@ char real_gamer_input;
 unsigned int current1;
 unsigned int current2;
 int player_total[3] = {0,0,0};
-
+unsigned char time1 = 0;
+unsigned int waste_time=0;
 void main(void)
 {
  	Sys_Init(); /* Initialize the C8051 board */
@@ -66,7 +67,7 @@ void main(void)
 	stats_led_off();
 	PLAYERBILED1 = 0;
 	PLAYERBILED0 = 0;
-	printf("after");
+	
 
  	while (round <= 2)
  	{	
@@ -92,10 +93,11 @@ void main(void)
  				trial_number++;
 				leds_buzzer_off();
 				light_four_leds();
- 				TR0 = 1;
 				counts1 = 0;
+				counts2 = 0;
  				current2 = counts1;
 				gamer_input = 0xFF;
+				TR0 = 1;
  				while(gamer_input == 0xFF & PB & current2 < delay_count)
  				{
  					gamer_input = getchar_nw();
@@ -140,19 +142,25 @@ void main(void)
  				}
  				stats_led_off();
  				TR0 = 0;
+ 				waste_time += counts2;
  			}
  			player_total[player-1] += player_score;
+ 			player_total[player-1] -= waste_time/1.40625;
+ 			time1 = waste_time/28.125;
+ 			printf("time elapsed is %u \r\n",time1);
  			printf("Yihao Huang scores: %d points;\r\n Zenan JIN scores: %d ;\r\nJiachen Yang scores: %d;\r\n",player_total[0],player_total[1],player_total[2]);
- 			player_total[player-1] -= counts2/1.40625;
- 			printf("Yihao Huang scores: %d points;\r\n Zenan JIN scores: %d ;\r\nJiachen Yang scores: %d;\r\n Count is: %d\r\n",player_total[0],player_total[1],player_total[2],counts2);
 			trial_number = 1;
 			player++;
-			counts2 = 0;
+			waste_time = 0;
+			player_score = 0;
+			Buzzer = 0;
+			wait_for_one_sec();
+			Buzzer = 1;
  		}
 		player = 1;
 		counts2 = 0;
  	}
- 	printf("Yihao Huang scores: %d points;\r\n Zenan JIN scores: %d ;\r\nJiachen Yang scores: %d;\r\n",player_total[0],player_total[1],player_total[2]);
+ 	printf("Final Result: \r\n Yihao Huang scores: %d points;\r\n Zenan JIN scores: %d ;\r\nJiachen Yang scores: %d;\r\n",player_total[0],player_total[1],player_total[2]);
 }
 
 void stats_led_off(void)
