@@ -158,7 +158,7 @@ void PCA_ISR ( void ) __interrupt 9
 unsigned int ReadRanger(void)
 {
 	unsigned char Data[2];
-	int range = 0;
+	unsigned int range = 0;
 	unsigned char addr = 0xE0;
 	i2c_read_data(addr,2,Data,2);
 	range = ( (Data[0] <<8) | Data[1]);
@@ -168,7 +168,7 @@ unsigned int ReadRanger(void)
 unsigned int ReadCompass(void) 
 {
 	unsigned char Data[2];
-	int heading = 0;
+	unsigned int heading = 0;
 	unsigned char addr = 0xC0;
 	i2c_read_data(addr,2,Data,2);
 	heading = ( (Data[0] <<8) | Data[1]);

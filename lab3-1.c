@@ -143,9 +143,9 @@ void Steering_Servo()
     else if(input == 's')  // single character input to decrease the pulsewidth
     {
         PW2 -= 10;
-        if(PW1 < PW_MIN)  // check if pulsewidth maximum exceeded
+        if(PW2 < PW_MIN)  // check if pulsewidth maximum exceeded
         {
-            PW1 = PW_MIN;
+            PW2 = PW_MIN;
         }     // set PW to a maximum value
     }
     else if(input == 'c')
