@@ -17,8 +17,12 @@ unsigned int ReadCompass(void);
 void wait_for_100ms(void);
 void wait_for_1s(void);
 void heading_to_east(void);
-char get_char(void);
+char get_speed(void);
+signed int get_desired_heading(void);
+int get_steering_gain(void);
 void Execute_PW(void);
+void ADC_Init(void);
+unsigned char read_AD_input(unsigned char n);
 //-----------------------------------------------------------------------------
 // Global Variables
 //-----------------------------------------------------------------------------
@@ -28,12 +32,20 @@ unsigned int PW_MAX = 3502;
 unsigned int PW1 = 0;
 unsigned int PW2 = 0;
 unsigned int PCA_counts;
-unsigned int heading = 0;
+signed int heading = 0;
 unsigned int distance = 0;
 char keypad;
 char check;
 char speed_level;
 unsigned int speed_level_int;
+signed int desired_heading = 0;
+int steering_gain;
+signed int error;
+
+unsigned char AD_read;
+unsigned int AD_value;
+unsigned int battery_read;
+
 __sbit __at 0xB0 SS;
 
 //-----------------------------------------------------------------------------
@@ -48,6 +60,7 @@ void main(void){
     PCA_Init();
     Interrupt_Init();
     SMB_Init();
+    ADC_Init();
 
     //print beginning message
     printf("Embedded Control Steering Calibration\r\n");
@@ -62,11 +75,18 @@ void main(void){
     }
     printf("Wait for 1 second.\r\n");
     wait_for_1s();
-	speed_level = get_char();
+	speed_level = get_speed();
     speed_level_int = (unsigned int) speed_level;
+    desired_heading = get_desired_heading();
+    steering_gain = get_steering_gain();
+
     while(1)
     {
-       
+        AD_read = read_AD_input(7);
+        printf("AD_read is %c\r\n", AD_read);
+        AD_value = (unsigned int) AD_value ;
+        battery_read = AD_value * 71.875; // AD_value * 2.4 / gain / 256 * 11.5k ohm / 1.5 k ohm * 1000
+        printf("The battery read is %u\r\n", battery_read);
         Read_Ranger_and_Compass();
         if(distance > 50)
         {
@@ -100,6 +120,10 @@ void main(void){
 //
 void Port_Init()
 {
+    P1MDIN &= ~0x80; /* Set P1.7 for analog input */
+    P1MDOUT &= ~0x80; /* Set P1.7 to open drain */
+    P1 |= 0x80; /* Send logic 1 to input pin P1.7 */
+
     P1MDOUT |= 0x05;  //set output pin for CEX0 or CEX2 in push-pull mode
     P3MDOUT &= 0x81;    //set P3.0 to input
     P3 = 0x81;          //set P3.0 to hign impedance
@@ -141,6 +165,22 @@ void SMB_Init(void)
     ENSMB = 1;
 }
 
+void ADC_Init(void)
+{
+    REF0CN = 0x03; /* Set Vref to use internal reference voltage (2.4 V)
+*/
+    ADC1CN = 0x80; /* Enable A/D converter (ADC1) */
+    ADC1CF |= 0x01; /* Set A/D converter gain to 1 */
+}
+
+unsigned char read_AD_input(unsigned char n)
+{
+    AMX1SL = n; /* Set P1.n as the analog input for ADC1 */
+    ADC1CN = ADC1CN & ~0x20; /* Clear the ��Conversion Completed�� flag */
+    ADC1CN = ADC1CN | 0x10; /* Initiate A/D conversion */
+    while ((ADC1CN & 0x20) == 0x00); /* Wait for conversion to complete */
+    return ADC1; /* Return digital value in ADC1 register */
+}
 
 //-----------------------------------------------------------------------------
 // PCA_ISR
@@ -166,8 +206,8 @@ void Read_Ranger_and_Compass(void)
     unsigned char addr = 0; 
 	wait_for_100ms();
    
-    distance = ReadRanger();
-    heading = ReadCompass(); //read data from compass and ranger
+    distance = (int)ReadRanger();
+    heading = (int)ReadCompass(); //read data from compass and ranger
     printf("Distance is %u\r\n",distance);
     printf("Heading is %u\r\n",heading); //print compass and ranger read
     
@@ -201,8 +241,10 @@ void wait_for_1s(void)
 
 void heading_to_east(void)
 {
-    int desired_heading = 2300;
-    int error = heading - desired_heading;
+    
+    error = heading - desired_heading;
+    printf("desire heading is %d\r\n",desired_heading);
+    printf("error is %d\r\n",error);
     if(error < -1800)
     {
         error += 3600;
@@ -211,7 +253,7 @@ void heading_to_east(void)
     {
         error -= 3600;
     }
-    PW1 = PW_CENTER + error*2;
+    PW1 = PW_CENTER + error* (steering_gain-48) /2;
     if(PW1 < PW_MIN)
     {
         PW1 = PW_MIN;
@@ -240,7 +282,7 @@ void Execute_PW()
 
 }
 
-char get_char(void)
+char get_speed(void)
 {
         
         lcd_clear();
@@ -266,7 +308,8 @@ char get_char(void)
              // This pauses for 1 PCA0 counter clock cycle (20ms) 
         
             lcd_clear();
-            lcd_print("Your speed_level is: %c\r",keypad);  
+            lcd_print("Your speed level is: %c\r",keypad);  
+            wait_for_1s();
         
             if(keypad == 0)printf("   **Wire Connection/XBR0 Error**   ");
             while(check != 0xFF)
@@ -277,7 +320,84 @@ char get_char(void)
         return keypad;     // A returned value of 0 (0x00) indicates wiring error
 }
 
+signed int get_desired_heading(void)
+{
+        int a;
+        int keypad_int;
+        lcd_clear();
+        lcd_print("Please enter desired heading\r\n");
+        pause();
+        keypad = read_keypad();
+        pause();
+        check = 13;
+        while(keypad == 0xFF)
+        {
+            pause();
+            keypad = read_keypad();
+            pause(); 
+        
+        }
+         // If the keypad is read too frequently (no delay), it will
+                    // lock up and stop responding. Must power down to reset.
+        
+        if (keypad != 0xFF)   // keypad = -1 if no key is pressed
+        {           // Note: fast read results in multiple lines on terminal
+                    // A longer delay will reduce multiple keypad reads but a
+                    // better approach is to wait for a -1 between keystrokes.
+             // This pauses for 1 PCA0 counter clock cycle (20ms) 
+            keypad_int = (int) keypad;
+            a = 900*(keypad_int - 49);
+            lcd_clear();
+            lcd_print("Your desired heading is: %u\r",a);  
+            wait_for_1s();
+        
+            if(keypad == 0)printf("   **Wire Connection/XBR0 Error**   ");
+            while(check != 0xFF)
+            {
+                check = read_keypad();
+            }
+        }      
+        return a;     // A returned value of 0 (0x00) indicates wiring error
+}
 
+int get_steering_gain(void)
+{
+        int a;
+        lcd_clear();
+        lcd_print("Please enter steering gain\r\n");
+        pause();
+        keypad = read_keypad();
+        pause();
+        check = 13;
+        while(keypad == 0xFF)
+        {
+            pause();
+            keypad = read_keypad();
+            pause(); 
+        
+        }
+         // If the keypad is read too frequently (no delay), it will
+                    // lock up and stop responding. Must power down to reset.
+        
+        if (keypad != 0xFF)   // keypad = -1 if no key is pressed
+        {           // Note: fast read results in multiple lines on terminal
+                    // A longer delay will reduce multiple keypad reads but a
+                    // better approach is to wait for a -1 between keystrokes.
+             // This pauses for 1 PCA0 counter clock cycle (20ms) 
+        
+            lcd_clear();
+            lcd_print("Your steering gain is: %c\r",keypad);  
+            wait_for_1s();
+        
+            if(keypad == 0)printf("   **Wire Connection/XBR0 Error**   ");
+            while(check != 0xFF)
+            {
+                check = read_keypad();
+            }
+        }      
+        a = (int)keypad;
+        return a;     // A returned value of 0 (0x00) indicates wiring error
+}
 
 unsigned int ReadRanger(void)
 {
