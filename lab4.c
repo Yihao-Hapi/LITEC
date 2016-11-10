@@ -41,7 +41,7 @@ unsigned int speed_level_int;
 signed int desired_heading = 0;
 int steering_gain;
 signed int error;
-
+unsigned int print_counts = 0;
 unsigned char AD_read;
 unsigned int AD_value;
 unsigned int battery_read;
@@ -67,8 +67,7 @@ void main(void){
     // set the PCA output to a neutral setting
     if((PW1 != PW_CENTER) || (PW2 != PW_CENTER) )
     {
-        printf("Please input a random number to calibrate.\r\n");
-        getchar();
+        
         PW1 = PW_CENTER;
 		PW2 = PW_CENTER;
         printf("Calibration completed. The pulsewidth is %d\r\n",PW1);
@@ -83,10 +82,8 @@ void main(void){
     while(1)
     {
         AD_read = read_AD_input(7);
-        printf("AD_read is %c\r\n", AD_read);
-        AD_value = (unsigned int) AD_value ;
+        AD_value = (unsigned int) AD_read;
         battery_read = AD_value * 71.875; // AD_value * 2.4 / gain / 256 * 11.5k ohm / 1.5 k ohm * 1000
-        printf("The battery read is %u\r\n", battery_read);
         Read_Ranger_and_Compass();
         if(distance > 50)
         {
@@ -94,7 +91,7 @@ void main(void){
             PW2 = PW_CENTER + (speed_level_int - 48)*80;
             Execute_PW();
         } 
-        else if(distance < 10)
+        else if(distance < 30)
         {
             PW1 = PW2 = PW_CENTER;
             Execute_PW();
@@ -106,7 +103,25 @@ void main(void){
             PW2 = PW_CENTER + (speed_level_int - 48)*80;
             Execute_PW();
             wait_for_1s();
+            Read_Ranger_and_Compass();
+            if(distance <= 50)
+            {
+                PW1 = PW_MAX;
+                PW2 = PW_CENTER - (speed_level_int - 48)*80;
+                Execute_PW();
+                wait_for_1s();
+                wait_for_1s();
+            }
 
+        }
+
+        while(SS)
+        {
+            PW2 = PW_CENTER; 
+            PW1 = PW_CENTER;
+            PCA0CP2 = 0xFFFF - PW2;
+            PCA0CP0 = 0xFFFF - PW1;
+         //while SS is off, turn off motor
         }//read data from ranger and compass, then change PCA compare module
     }
 
@@ -196,7 +211,8 @@ void PCA_ISR(void) __interrupt 9
         CF = 0;
     }
     PCA0CN &= 0xC0; 
-    PCA_counts++; // reference to the sample code in Example 4.5 -Pulse Width Modulation 
+    PCA_counts++;
+	print_counts++; // reference to the sample code in Example 4.5 -Pulse Width Modulation 
     // implemented using the PCA (Programmable Counter Array), p. 50 in Lab Manual.
 }
 
@@ -208,8 +224,7 @@ void Read_Ranger_and_Compass(void)
    
     distance = (int)ReadRanger();
     heading = (int)ReadCompass(); //read data from compass and ranger
-    printf("Distance is %u\r\n",distance);
-    printf("Heading is %u\r\n",heading); //print compass and ranger read
+     //print compass and ranger read
     
     Data1[0] = 0x51;
     addr = 0xE0;
@@ -243,8 +258,7 @@ void heading_to_east(void)
 {
     
     error = heading - desired_heading;
-    printf("desire heading is %d\r\n",desired_heading);
-    printf("error is %d\r\n",error);
+    
     if(error < -1800)
     {
         error += 3600;
@@ -253,7 +267,7 @@ void heading_to_east(void)
     {
         error -= 3600;
     }
-    PW1 = PW_CENTER + error* (steering_gain-48) /2;
+    PW1 = PW_CENTER - error* (steering_gain-48) /2;
     if(PW1 < PW_MIN)
     {
         PW1 = PW_MIN;
@@ -266,17 +280,29 @@ void heading_to_east(void)
 }//control servo input signal PW according to compass reading
 
 void Execute_PW()
-{
-    printf("Speed_PW: %u\r\n", PW2);
-    printf("Heading_PW: %u\r\n\n", PW1); //print current speed and heading PW
-    /*while(SS)
+{	
+	if(print_counts > 40)
+	{
+    	printf("Distance is %u\r\n",distance);
+    	printf("Heading is %u\r\n",heading);
+		printf("desire heading is %d\r\n",desired_heading);
+    	printf("error is %d\r\n",error);
+		printf("Speed_PW: %u\r\n", PW2);
+    	printf("Heading_PW: %u\r\n\n", PW1); 
+		printf("The battery read is %u\r\n", battery_read);//print current speed and heading PW
+        print_counts = 0;
+        lcd_clear();
+        lcd_print("Current heading is  %u\r\n",heading);
+	}
+
+    while(SS)
     {
-        PW2 = PW_CENTER = PW1;
+        PW2 = PW_CENTER; 
+        PW1 = PW_CENTER;
         PCA0CP2 = 0xFFFF - PW2;
         PCA0CP0 = 0xFFFF - PW1;
          //while SS is off, turn off motor
     }
-    */
     PCA0CP2 = 0xFFFF - PW2;
     PCA0CP0 = 0xFFFF - PW1; //change PCA compare module value
 
@@ -406,7 +432,9 @@ unsigned int ReadRanger(void)
     unsigned char addr = 0xE0;
     i2c_read_data(addr,2,Data,2);
     range = ( (Data[0] <<8) | Data[1]);
+
     return range;
+
 }
 
 unsigned int ReadCompass(void) 
