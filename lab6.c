@@ -20,13 +20,19 @@ void Execute_PW(void);
 void ADC_Init(void);
 unsigned char read_AD_input(unsigned char n);
 void get_error(void);
+void set_neutral_for_1s(void);
+void calibrate_thrust_angle(void);
+int get_Kp(void);
+int get_Kd(void);
+
 //-----------------------------------------------------------------------------
 // Global Variables
 //-----------------------------------------------------------------------------
-unsigned int PW_CENTER = 2765;
-unsigned int PW_MIN = 2028;
-unsigned int PW_MAX = 3502;
+__xdata unsigned int PW_CENTER = 2765;
+__xdata unsigned int PW_MIN = 2028;
+__xdata unsigned int PW_MAX = 3502;
 unsigned int rudder_pw;
+
 unsigned int calculated_rudder_pw;
 unsigned int PCA_counts;
 int heading = 0;
@@ -37,9 +43,7 @@ char check;
 unsigned int speed_level_int;
 int desired_heading = 0;
 int Kp;
-int Kp_input;
 int Kd;
-int Kd_input;
 int error;
 int previous_error;
 int speed;
@@ -56,6 +60,7 @@ unsigned int battery_read;
 //-----------------------------------------------------------------------------
 void main(void){
     // initialize board
+	
     Sys_Init();
     putchar(' '); //the quotes in this line may not format correctly
     Port_Init();
@@ -64,8 +69,12 @@ void main(void){
     Interrupt_Init();
     SMB_Init();
     ADC_Init();
-
-    Kp = 12;
+	printf("start\r\n");
+    Kp = get_Kp();
+    Kd = get_Kd();
+    set_neutral_for_1s();
+    calibrate_thrust_angle();
+	printf("desired_heading  distance  error  rudder_pw  battery_read\r\n");
     while(1)
     { // AD_value * 2.4 / gain / 256 * 11.5k ohm / 1.5 k ohm * 1000
         Read_Ranger_and_Compass();
@@ -74,22 +83,25 @@ void main(void){
         else distance_input = distance;
         desired_heading = 45*(distance_input - 50) + 1800;
         get_error();
+	
         speed = error - previous_error;
-        while((speed > 100) || (speed < -100))
+        while((speed > 200) || (speed < -200))
         {
-            if(speed > 100) tmp_pw = PW_MAX;
-            else if(speed < -100) tmp_pw = PW_MIN;
+            rudder_pw = PW_CENTER;
             Execute_PW();
+			Read_Ranger_and_Compass();
+            get_error();
             previous_error = error;
             Read_Ranger_and_Compass();
             get_error();
             speed = error - previous_error;
         } 
-        tmp_pw = (long)Kp*error + (long)Kd*speed + PW_CENTER; 
+        tmp_pw = (long)Kp*error/10 + (long)Kd*speed + PW_CENTER; 
         calculated_rudder_pw = (unsigned int)tmp_pw;
         if (tmp_pw > (long)PW_MAX) tmp_pw = PW_MAX; 
         else if (tmp_pw < (long)PW_MIN) tmp_pw = PW_MIN; 
         rudder_pw = (unsigned int)tmp_pw; 
+        
         previous_error = error; 
         Execute_PW();
     }
@@ -133,7 +145,7 @@ void XBR0_Init()
 //
 void PCA_Init(void)
 {
-    PCA0CPM0 = PCA0CPM2 = 0xC2;// reference to the sample code in Example 4.5 -Pulse Width Modulation 
+    PCA0CPM0 = PCA0CPM1 = PCA0CPM2= PCA0CPM3= 0xC2;// reference to the sample code in Example 4.5 -Pulse Width Modulation 
     PCA0CN = 0x40;
     PCA0MD = 0x81;// implemented using the PCA (Programmable Counter Array), p. 50 in Lab Manual.
 }
@@ -225,22 +237,17 @@ void wait_for_1s(void)
 
 
 void Execute_PW()
-{	
+{	unsigned int thrust_pw = 5530 - rudder_pw;
 	if(print_counts > 40)
 	{
-    	printf("Distance is %u\r\n",distance);
-    	printf("Heading is %u\r\n",heading);
-		printf("desired heading is %d\r\n",desired_heading);
-    	printf("error is %d\r\n",error);
-        printf("speed is %d\r\n",speed);
-        printf("calculated_rudder_pw is %u\r\n",calculated_rudder_pw);
-		printf("rudder_PW: %u\r\n", rudder_pw);
-		printf("The battery read is %u\r\n", battery_read);//print current speed and heading PW
+
+        printf("%u               %u        %d        %u         %u\r\n",desired_heading, distance, error, rudder_pw, battery_read);//print current speed and heading PW
         print_counts = 0;
 	}
 
     
-    //PCA0CP0 = 0xFFFF - rudder_pw; //change PCA compare module value
+    PCA0CP0 = PCA0CP2 = 0xFFFF - rudder_pw;
+    PCA0CP3 = 0xFFFF - thrust_pw; //change PCA compare module value
 
 }
 
@@ -271,4 +278,79 @@ void get_error(void)
     error = desired_heading-heading;
     if(error > 1800) error -= 3600;
     if(error < -1800) error += 3600;
+}
+
+void set_neutral_for_1s(void)
+{
+    PCA0CP0 = 0xFFFF - PW_CENTER;
+    PCA0CP2 = 0xFFFF - PW_CENTER;
+    PCA0CP3 = 0xFFFF - PW_CENTER;
+    wait_for_1s();
+}
+
+void calibrate_thrust_angle(void)
+{
+    char input = 'a';
+	unsigned int angle_pw = 2275;
+	unsigned int a = 2028;
+	unsigned int b = 3502;
+    printf("Thrust angle calibration start. \r\n");
+  
+    while(input != 'c')
+    {
+        input = getchar();
+        if(input == 'a')
+        {
+            angle_pw -= 10;
+            if(angle_pw < a) angle_pw = a;
+        }
+
+        else if(input == 'b')
+        {
+            angle_pw += 10;
+            if(angle_pw > b) angle_pw = b;
+        }
+        PCA0CP1 = 0xFFFF - angle_pw;
+        printf("angle_pw is %u",angle_pw);
+    }
+    printf("Calibration Completed. \r\n");
+}
+
+int get_Kp(void)
+{
+    char input;
+    int Kp_input;
+    printf("Please set Kp value\r\n");
+    input = getchar();
+    while((input != 'a')&&(input != 'b')&&(input != 'c')&&(input != 'd'))
+    {
+        printf("Please enter another value\r\n");
+        input = getchar();
+    }
+    if(input == 'a') Kp_input = 1;
+    else if(input == 'b') Kp_input = 5;
+    else if(input == 'c') Kp_input = 30;
+    else if(input == 'd') Kp_input = 120;
+    printf("The value of Kp is %u\r\n",Kp_input);
+    return Kp_input;
+}    
+
+int get_Kd(void)
+{
+    char input;
+    int Kd_input;
+    printf("Plese set Kd value\r\n");
+    input = getchar();
+    while((input != 'a')&&(input != 'b')&&(input != 'c')&&(input != 'd'))
+    {
+        printf("Please enter another value\r\n");
+        input = getchar();
+    }
+    if(input == 'a') Kd_input = 0;
+    else if(input == 'b') Kd_input = 10;
+    else if(input == 'c') Kd_input = 70;
+    else if(input == 'd') Kd_input = 180;
+    printf("The value of Kd is %u\r\n",Kd_input);
+    return Kd_input;
+
 }
